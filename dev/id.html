@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>PDF417 Capture Playground</title>
+
+    <meta charset="UTF-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    >
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100dvw;
+        height: 100dvh;
+        overflow: hidden;
+        background: black;
+        color: white;
+        font-family: system-ui, sans-serif;
+      }
+
+      guided-capture,
+      #result {
+        position: fixed;
+        inset: 0;
+        width: 100dvw;
+        height: 100dvh;
+      }
+
+      guided-capture {
+        z-index: 0;
+      }
+
+      #result {
+        z-index: 1;
+        object-fit: contain;
+        object-position: center;
+        background: black;
+      }
+
+      #guidance {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+
+        padding-top: calc(24px + env(safe-area-inset-top, 0px));
+        padding-left: calc(72px + env(safe-area-inset-left, 0px));
+        padding-right: calc(72px + env(safe-area-inset-right, 0px));
+
+        text-align: center;
+        pointer-events: none;
+      }
+
+      #guidance h2 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        text-shadow: 0 2px 8px #000a;
+      }
+
+      #guidance p {
+        margin: 8px 0 0;
+        font-size: 14px;
+        color: #ddd;
+        text-shadow: 0 2px 8px #000a;
+      }
+
+      #torch {
+        position: fixed;
+        top: calc(16px + env(safe-area-inset-top, 0px));
+        right: calc(16px + env(safe-area-inset-right, 0px));
+        z-index: 10;
+
+        display: none;
+        align-items: center;
+        justify-content: center;
+
+        width: 48px;
+        height: 48px;
+
+        border: none;
+        border-radius: 50%;
+
+        background: #0009;
+        color: white;
+
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+      }
+
+      #torch svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      #torch-on {
+        display: none;
+      }
+
+      body:has(guided-capture[torch-supported]) #torch {
+        display: flex;
+      }
+
+      body:has(guided-capture[torch-enabled]) #torch {
+        background: #facc15;
+        color: black;
+      }
+
+      body:has(guided-capture[torch-enabled]) #torch-on {
+        display: block;
+      }
+
+      body:has(guided-capture[torch-enabled]) #torch-off {
+        display: none;
+      }
+
+      body:has(#result:not([hidden])) #torch,
+      body:has(#result:not([hidden])) #guidance,
+      body:has(#result:not([hidden])) #analysis-results,
+      body:has(#result:not([hidden])) #metrics {
+        display: none;
+      }
+
+      #controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+
+        padding: 16px;
+        padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+        padding-left: calc(16px + env(safe-area-inset-left, 0px));
+        padding-right: calc(16px + env(safe-area-inset-right, 0px));
+
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+
+        pointer-events: none;
+      }
+
+      #analysis-results {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+        max-width: min(100%, 900px);
+      }
+
+      .analysis-result {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+
+        padding: 8px 12px;
+
+        border-radius: 999px;
+        background: #000a;
+        backdrop-filter: blur(12px);
+
+        font-size: 13px;
+        color: white;
+      }
+
+      .analysis-result.passed {
+        color: #86efac;
+      }
+
+      .analysis-result.failed {
+        color: #fca5a5;
+      }
+
+      .analysis-result.warning {
+        color: #fde68a;
+      }
+
+      .indicator {
+        width: 8px;
+        height: 8px;
+        flex-shrink: 0;
+
+        border-radius: 50%;
+        background: currentColor;
+      }
+
+      #metrics {
+        width: min(100%, 420px);
+        padding: 12px 16px;
+
+        border-radius: 12px;
+        background: #000a;
+        backdrop-filter: blur(12px);
+
+        font-size: 11px;
+        font-family: monospace;
+
+        pointer-events: auto;
+      }
+
+      #metrics summary {
+        cursor: pointer;
+        text-align: center;
+        color: #ddd;
+      }
+
+      #metrics-content {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+
+        gap: 8px 16px;
+        margin-top: 12px;
+      }
+
+      .metric {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .metric-name {
+        color: #aaa;
+      }
+
+      .metric-value {
+        color: white;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .metric-value.warning {
+        color: #fde68a;
+      }
+
+      #capture {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+
+        min-width: 240px;
+        padding: 16px 32px;
+
+        border: none;
+        border-radius: 999px;
+
+        background: white;
+        color: black;
+
+        font-size: 16px;
+        font-weight: 600;
+        white-space: nowrap;
+
+        cursor: pointer;
+
+        box-shadow: 0 4px 20px #0005;
+        pointer-events: auto;
+
+        transition:
+          background 150ms ease,
+          opacity 150ms ease;
+      }
+
+      body:has(guided-capture[ready]) #capture {
+        background: #22c55e;
+        color: black;
+      }
+
+      #capture:disabled,
+      #torch:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      #hint {
+        font-size: 14px;
+        text-shadow: 0 1px 6px black;
+      }
+
+      #spinner {
+        width: 18px;
+        height: 18px;
+
+        border: 2px solid #0003;
+        border-top-color: black;
+        border-radius: 50%;
+
+        animation: spin 0.7s linear infinite;
+      }
+
+      #spinner,
+      #capturing-label,
+      #hint {
+        display: none;
+      }
+
+      body:has(guided-capture[capturing]) #spinner,
+      body:has(guided-capture[capturing]) #capturing-label,
+      body:has(guided-capture[capturing]) #hint {
+        display: block;
+      }
+
+      body:has(guided-capture[capturing]) #label {
+        display: none;
+      }
+
+      #result-meta {
+        position: fixed;
+
+        top: calc(16px + env(safe-area-inset-top, 0px));
+        left: calc(16px + env(safe-area-inset-left, 0px));
+        right: calc(16px + env(safe-area-inset-right, 0px));
+
+        z-index: 12;
+
+        display: flex;
+        justify-content: center;
+
+        pointer-events: none;
+      }
+
+      #result-meta-inner {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+
+        max-width: min(100%, 900px);
+
+        padding: 10px 14px;
+
+        border-radius: 12px;
+        background: #000a;
+        backdrop-filter: blur(12px);
+
+        font-size: 13px;
+        text-align: center;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <guided-capture
+        auto-torch
+        auto-torch-delay="1500"
+      facing-mode="environment"
+      analysis-fps="5"
+      analysis-resolution="4096"
+      capture-cache-duration="1500"
+    ></guided-capture>
+
+    <img
+      id="result"
+      hidden
+      alt="Captured PDF417 barcode"
+    >
+
+    <div id="result-meta" hidden>
+      <div id="result-meta-inner"></div>
+    </div>
+
+    <div id="guidance">
+      <h2>Scan the Back of Your ID</h2>
+
+      <p id="guidance-message">
+        Position your ID inside the frame
+      </p>
+    </div>
+
+    <button
+      id="torch"
+      aria-label="Toggle torch"
+      aria-pressed="false"
+    >
+      <svg
+        id="torch-on"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M13 2 3 14h8l-1 8 11-12h-9l1-8z"/>
+      </svg>
+
+      <svg
+        id="torch-off"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m12 5 1-3-3 3"/>
+        <path d="M18 10h3l-3 3"/>
+        <path d="m8 8-5 6h8l-1 8 5-6"/>
+        <path d="m2 2 20 20"/>
+      </svg>
+    </button>
+
+    <div id="controls">
+      <details id="metrics">
+        <summary>Live readability metrics</summary>
+        <div id="metrics-content"></div>
+      </details>
+
+      <div id="analysis-results"></div>
+
+      <span id="hint">Hold steady</span>
+
+      <button id="capture" disabled>
+        <span id="spinner"></span>
+        <span id="capturing-label">Capturing…</span>
+        <span id="label">Capture Barcode</span>
+      </button>
+    </div>
+
+    <script type="module">
+      import {
+        BarcodeAnalyzer,
+        BarcodeCaptureProcessor,
+        ReadabilityAnalyzer,
+      } from '/src/image-capture/index.ts';
+
+      const camera = document.querySelector('guided-capture');
+
+      const result = document.querySelector('#result');
+      const resultMeta = document.querySelector('#result-meta');
+      const resultMetaInner = document.querySelector('#result-meta-inner');
+
+      const button = document.querySelector('#capture');
+      const label = document.querySelector('#label');
+      const torch = document.querySelector('#torch');
+
+      const analysisResults =
+        document.querySelector('#analysis-results');
+
+      const guidanceMessage =
+        document.querySelector('#guidance-message');
+
+      const metricsContent =
+        document.querySelector('#metrics-content');
+
+      let captured = false;
+      let busy = false;
+      let photoURL;
+
+      // --------------------------------------------------
+      // Guided capture configuration
+      // --------------------------------------------------
+
+      camera.boundingBox = {
+        aspectRatio: 85.6 / 53.98,
+        width: 0.85,
+        maxHeight: 0.8,
+        borderRadius: 12,
+        maskOpacity: 0.65,
+        borderWidth: 2,
+        borderColor: 'white',
+      };
+
+      const readabilityOptions = {
+        minBrightness: 40,
+        maxBrightness: 235,
+
+        minLocalContrast: 0.06,
+        minDynamicRange: 0.25,
+        minSharpness: 0.1,
+
+        maxUnderexposedRatio: 0.4,
+        maxOverexposedRatio: 0.4,
+
+        analysisResolution: 640,
+        tileSize: 32,
+
+        // Quality issues should provide guidance,
+        // not prevent successfully decoded captures.
+        advisory: true,
+      };
+
+      camera.analyzers = [
+        new ReadabilityAnalyzer(readabilityOptions),
+
+        new BarcodeAnalyzer({
+          requiredFormats: ['pdf417'],
+          minCount: 1,
+          maxCount: 1,
+          minCoverage: 0,
+
+          cropToRegion: true,
+          searchPadding: 0.1,
+          boundsTolerance: 0.05,
+
+          preprocessing: 'otsu-fallback',
+          includeRawValue: false,
+        }),
+      ];
+
+      camera.captureProcessor = new BarcodeCaptureProcessor({
+        format: 'pdf417',
+        selection: 'largest',
+        padding: 0.08,
+        mimeType: 'image/png',
+      });
+
+      // --------------------------------------------------
+      // Photo lifecycle
+      // --------------------------------------------------
+
+      function clearPhoto() {
+        result.hidden = true;
+        result.removeAttribute('src');
+
+        resultMeta.hidden = true;
+        resultMetaInner.textContent = '';
+
+        if (photoURL) {
+          URL.revokeObjectURL(photoURL);
+          photoURL = undefined;
+        }
+      }
+
+      function syncControls() {
+        button.disabled =
+          busy || (!captured && !camera.ready);
+
+        torch.disabled = busy || captured;
+
+        torch.setAttribute(
+          'aria-pressed',
+          String(camera.torchEnabled),
+        );
+      }
+
+      function formatAnalyzerName(id) {
+        return id
+          .replaceAll('-', ' ')
+          .replaceAll('_', ' ')
+          .replace(/\b\w/g, letter => letter.toUpperCase());
+      }
+
+      // --------------------------------------------------
+      // Analyzer feedback
+      // --------------------------------------------------
+
+      function renderAnalysis(report) {
+        analysisResults.replaceChildren();
+
+        const barcodePassed =
+          report.results.barcode?.passed === true;
+
+        for (const [id, analysis] of Object.entries(report.results)) {
+          const readable =
+            analysis.metadata?.readable ?? analysis.passed;
+
+          const advisoryWarning =
+            analysis.passed && !readable;
+
+          const chip = document.createElement('div');
+
+          let status;
+
+          if (advisoryWarning) {
+            status = 'warning';
+          } else {
+            status = analysis.passed ? 'passed' : 'failed';
+          }
+
+          chip.className = `analysis-result ${status}`;
+
+          const indicator = document.createElement('span');
+          indicator.className = 'indicator';
+
+          const text = document.createElement('span');
+          const name = formatAnalyzerName(id);
+
+          if (advisoryWarning && barcodePassed) {
+            text.textContent = `${name}: Acceptable`;
+          } else if (advisoryWarning) {
+            text.textContent =
+              analysis.message ?? `${name}: Improve quality`;
+          } else if (analysis.passed) {
+            text.textContent = `${name}: OK`;
+          } else {
+            text.textContent =
+              analysis.message ?? `${name}: Failed`;
+          }
+
+          chip.append(indicator, text);
+          analysisResults.append(chip);
+        }
+      }
+
+      // --------------------------------------------------
+      // Readability metrics
+      // --------------------------------------------------
+
+      function renderMetrics(report) {
+        metricsContent.replaceChildren();
+
+        const readability = report.results.readability;
+        const barcode = report.results.barcode;
+
+        const metrics = readability?.metadata;
+
+        function addMetric(name, value, warning = false) {
+          const row = document.createElement('div');
+          row.className = 'metric';
+
+          const label = document.createElement('span');
+          label.className = 'metric-name';
+          label.textContent = name;
+
+          const text = document.createElement('span');
+
+          text.className = warning
+            ? 'metric-value warning'
+            : 'metric-value';
+
+          text.textContent = value;
+
+          row.append(label, text);
+          metricsContent.append(row);
+        }
+
+        const decimal = (value, precision = 3) =>
+          typeof value === 'number'
+            ? value.toFixed(precision)
+            : '—';
+
+        const percentage = value =>
+          typeof value === 'number'
+            ? `${(value * 100).toFixed(1)}%`
+            : '—';
+
+        if (metrics) {
+          addMetric(
+            'Brightness',
+            decimal(metrics.brightness, 1),
+            metrics.brightness < readabilityOptions.minBrightness ||
+            metrics.brightness > readabilityOptions.maxBrightness,
+          );
+
+          addMetric(
+            'Contrast',
+            decimal(metrics.localContrast),
+            metrics.localContrast <
+              readabilityOptions.minLocalContrast,
+          );
+
+          addMetric(
+            'Range',
+            decimal(metrics.dynamicRange),
+            metrics.dynamicRange <
+              readabilityOptions.minDynamicRange,
+          );
+
+          addMetric(
+            'Sharpness',
+            decimal(metrics.sharpness),
+            metrics.sharpness <
+              readabilityOptions.minSharpness,
+          );
+
+          addMetric(
+            'Underexposed',
+            percentage(metrics.underexposedRatio),
+            metrics.underexposedRatio >
+              readabilityOptions.maxUnderexposedRatio,
+          );
+
+          addMetric(
+            'Overexposed',
+            percentage(metrics.overexposedRatio),
+            metrics.overexposedRatio >
+              readabilityOptions.maxOverexposedRatio,
+          );
+
+          addMetric(
+            'Quality score',
+            decimal(readability.score),
+          );
+
+          addMetric(
+            'Quality time',
+            `${decimal(metrics.durationMs, 1)}ms`,
+          );
+        }
+
+        if (barcode?.metadata) {
+          addMetric(
+            'Decode time',
+            `${decimal(barcode.metadata.durationMs, 1)}ms`,
+          );
+
+          addMetric(
+            'Preprocessing',
+            barcode.metadata.preprocessing ?? 'none',
+          );
+
+          addMetric(
+            'Otsu threshold',
+            decimal(barcode.metadata.threshold, 0),
+          );
+
+          addMetric(
+            'Scan resolution',
+            `${barcode.metadata.scanWidth ?? '—'} × ${
+              barcode.metadata.scanHeight ?? '—'
+            }`,
+          );
+        }
+      }
+
+      // --------------------------------------------------
+      // Contextual guidance
+      // --------------------------------------------------
+
+      function getGuidance(report) {
+        if (camera.ready) {
+          return 'Barcode verified. Capture when ready.';
+        }
+
+        const barcode = report.results.barcode;
+        const readability = report.results.readability;
+
+        // If a barcode was decoded but failed a spatial
+        // constraint, prioritize positioning guidance.
+
+        if (
+          !barcode?.passed &&
+          barcode?.metadata?.matchingCount > 0
+        ) {
+          return barcode.message ??
+            'Position your ID inside the frame';
+        }
+
+        const issues = readability?.metadata?.issues ?? [];
+
+        const hasIssue = code =>
+          issues.some(issue => issue.code === code);
+
+        if (hasIssue('too_bright') || hasIssue('overexposed')) {
+          return 'Tilt your ID slightly to reduce glare';
+        }
+
+        if (hasIssue('too_dark') || hasIssue('underexposed')) {
+          return camera.torchEnabled
+            ? 'Improve lighting and hold steady'
+            : camera.torchSupported
+              ? 'Turn on your flashlight to improve visibility'
+              : 'Move somewhere with better lighting';
+        }
+
+        if (
+          hasIssue('low_contrast') ||
+          hasIssue('low_dynamic_range')
+        ) {
+          return !camera.torchEnabled && camera.torchSupported
+            ? 'Try turning on your flashlight to improve detail'
+            : 'Adjust lighting to improve barcode contrast';
+        }
+
+        if (hasIssue('blurry')) {
+          return 'Hold steady and allow the camera to focus';
+        }
+
+        if (!barcode?.passed) {
+          return barcode?.message ??
+            'Position the barcode inside the frame';
+        }
+
+        const failed = Object.values(report.results)
+          .find(analysis => !analysis.passed);
+
+        return failed?.message ?? 'Hold steady';
+      }
+
+      // --------------------------------------------------
+      // Live analysis
+      // --------------------------------------------------
+
+      let latestReport;
+
+      camera.addEventListener('analysis', event => {
+        if (captured || busy) return;
+
+        latestReport = event.detail;
+
+        renderAnalysis(latestReport);
+        renderMetrics(latestReport);
+
+        guidanceMessage.textContent =
+          getGuidance(latestReport);
+
+        syncControls();
+      });
+
+      // Cached readiness can expire between analysis events.
+      // Observe reflected attributes to keep controls in sync.
+
+      const cameraObserver = new MutationObserver(() => {
+        syncControls();
+
+        if (!captured && !busy && latestReport) {
+          guidanceMessage.textContent =
+            getGuidance(latestReport);
+        }
+      });
+
+      cameraObserver.observe(camera, {
+        attributes: true,
+        attributeFilter: [
+          'ready',
+          'capturing',
+          'torch-supported',
+          'torch-enabled',
+        ],
+      });
+
+      // --------------------------------------------------
+      // Torch control
+      // --------------------------------------------------
+
+      torch.addEventListener('click', async () => {
+        if (camera.capturing || busy || captured) return;
+
+        busy = true;
+        syncControls();
+
+        try {
+          await camera.toggleTorch();
+
+          latestReport = undefined;
+
+          analysisResults.replaceChildren();
+          metricsContent.replaceChildren();
+
+          guidanceMessage.textContent =
+            'Adjusting lighting…';
+        } catch (error) {
+          console.error('Torch failed:', error);
+        } finally {
+          busy = false;
+          syncControls();
+        }
+      });
+
+      // --------------------------------------------------
+      // Capture / recapture
+      // --------------------------------------------------
+
+      button.addEventListener('click', async () => {
+        if (camera.capturing || busy) return;
+
+        if (captured) {
+          clearPhoto();
+
+          captured = false;
+          latestReport = undefined;
+
+          analysisResults.replaceChildren();
+          metricsContent.replaceChildren();
+
+          camera.analysisEnabled = true;
+
+          label.textContent = 'Capture Barcode';
+
+          guidanceMessage.textContent =
+            'Position your ID inside the frame';
+
+          syncControls();
+
+          return;
+        }
+
+        if (!camera.ready) return;
+
+        busy = true;
+        syncControls();
+
+        try {
+          // Do not disable analysis before capture.
+          // Doing so would invalidate the cached frame.
+
+          const photo = await camera.capture();
+
+          camera.analysisEnabled = false;
+
+          label.textContent = 'Processing…';
+
+          photoURL = URL.createObjectURL(photo);
+          result.src = photoURL;
+
+          await result.decode();
+
+          result.hidden = false;
+          captured = true;
+
+          resultMeta.hidden = false;
+
+          resultMetaInner.textContent = [
+            `${result.naturalWidth} × ${result.naturalHeight}px`,
+            `${(photo.size / 1024).toFixed(1)} KB`,
+            photo.type || 'Unknown format',
+            'PDF417 verified',
+          ].join(' • ');
+
+          if (camera.torchEnabled) {
+            try {
+              await camera.setTorch(false);
+            } catch (error) {
+              console.warn('Failed to disable torch:', error);
+            }
+          }
+
+          console.log('Captured barcode:', photo);
+        } catch (error) {
+          clearPhoto();
+
+          captured = false;
+          camera.analysisEnabled = true;
+
+          console.error('Capture failed:', error);
+
+          alert(
+            error instanceof Error
+              ? error.message
+              : 'Capture failed',
+          );
+        } finally {
+          busy = false;
+
+          label.textContent = captured
+            ? 'Recapture'
+            : 'Capture Barcode';
+
+          syncControls();
+        }
+      });
+
+      camera.addEventListener('camera-error', event => {
+        guidanceMessage.textContent =
+          'Unable to access camera';
+
+        console.error(event.detail);
+
+        syncControls();
+      });
+
+      window.addEventListener('pagehide', event => {
+        if (event.persisted) return;
+
+        cameraObserver.disconnect();
+
+        clearPhoto();
+        camera.stop();
+      });
+
+      syncControls();
+    </script>
+  </body>
+</html>

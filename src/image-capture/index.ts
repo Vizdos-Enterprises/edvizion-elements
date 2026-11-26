@@ -14,3 +14,9 @@ export * from './analyzers/face.js';
 export * from './processors/face.js';
 
 export * from './analysis/image-pipeline.js';
+export * from './analysis/otsu.js';
+
+export * from './analyzers/barcode.js';
+export * from './processors/barcode.js';
+
+export * from './analyzers/readability.js';

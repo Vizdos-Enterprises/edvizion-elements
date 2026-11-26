@@ -21,13 +21,15 @@ import type {
   CaptureProcessor,
 } from './analysis/types.js';
 
+type TorchSource = 'manual' | 'automatic';
+
 @customElement('guided-capture')
 export class GuidedCapture extends LitElement {
   @property({ type: String, attribute: 'facing-mode' })
   accessor facingMode: 'user' | 'environment' = 'environment';
 
   @property({ attribute: false })
-  accessor boundingBox: BoundingBox | undefined = undefined;;
+  accessor boundingBox: BoundingBox | undefined = undefined;
 
   @property({ attribute: false })
   accessor analyzers: Analyzer[] = [];
@@ -61,6 +63,37 @@ export class GuidedCapture extends LitElement {
   })
   accessor torchEnabled = false;
 
+  @property({
+    type: Boolean,
+    attribute: 'auto-torch',
+  })
+  accessor autoTorch = false;
+
+  @property({
+    type: Number,
+    attribute: 'auto-torch-delay',
+  })
+  accessor autoTorchDelay = 1500;
+
+  @property({
+    type: Boolean,
+    reflect: true,
+    attribute: 'auto-torch-activated',
+  })
+  accessor autoTorchActivated = false;
+
+  @property({
+    type: Number,
+    attribute: 'auto-torch-delay',
+  })
+  accessor autoTorchLuminanceThreshold = 120;
+
+  @property({
+    type: Number,
+    attribute: 'capture-cache-duration',
+  })
+  accessor captureCacheDuration = 1500;
+
   @property({ attribute: false })
   accessor analysis: AnalysisReport | undefined = undefined;
 
@@ -75,6 +108,12 @@ export class GuidedCapture extends LitElement {
 
   @query('.bounding-box')
   private accessor guide!: HTMLElement | null;
+
+  private poorLightingSince?: number;
+  private autoTorchSuppressed = false;
+
+  private torchChanging = false;
+  private torchOperation: Promise<void> = Promise.resolve();
 
   private pipeline = new AnalysisPipeline();
 
@@ -93,12 +132,6 @@ export class GuidedCapture extends LitElement {
   };
 
   private revision = 0;
-
-  @property({
-    type: Number,
-    attribute: 'capture-cache-duration',
-  })
-  accessor captureCacheDuration = 1500;
 
   private cacheExpiryTimer?: ReturnType<typeof setTimeout>;
 
@@ -168,6 +201,8 @@ export class GuidedCapture extends LitElement {
     const controller = new AbortController();
     this.controller = controller;
 
+    this.resetAutoTorch();
+
     void this.updateComplete.then(() => {
       if (
         controller.signal.aborted ||
@@ -195,6 +230,11 @@ export class GuidedCapture extends LitElement {
     this.observer = undefined;
     this.resizeObserver = undefined;
 
+    this.autoTorchActivated = false;
+    this.torchEnabled = false;
+    this.torchSupported = false;
+
+    this.resetAutoTorch();
     this.invalidateAnalysis();
   }
 
@@ -205,16 +245,39 @@ export class GuidedCapture extends LitElement {
       changed.has('analyzers') ||
       changed.has('boundingBox') ||
       changed.has('analysisResolution') ||
-      changed.has('analysisEnabled')
+      changed.has('analysisEnabled') ||
+      changed.has('captureProcessor') ||
+      changed.has('captureCacheDuration') ||
+      changed.has('facingMode')
     ) {
       this.invalidateAnalysis();
     }
+
+    if (
+      changed.has('autoTorch') ||
+      changed.has('autoTorchDelay') ||
+      changed.has('autoTorchLuminanceThreshold') ||
+      changed.has('analysisEnabled')
+    ) {
+      this.poorLightingSince = undefined;
+    }
+
+    if (changed.has('autoTorch') && this.autoTorch) {
+      this.resetAutoTorch();
+    }
   }
+
+  // --------------------------------------------------
+  // Analysis lifecycle
+  // --------------------------------------------------
 
   private invalidateAnalysis(): void {
     this.revision++;
+
     this.ready = false;
     this.analysis = undefined;
+
+    this.poorLightingSince = undefined;
 
     this.releaseAnalyzedFrame();
   }
@@ -227,13 +290,28 @@ export class GuidedCapture extends LitElement {
     this.resizeObserver.observe(this.stage);
   }
 
-  private observeCamera(): void {
-    const sync = () => {
-      this.torchSupported = this.camera.torchSupported;
-      this.torchEnabled = this.camera.torchEnabled;
-    };
+  private syncTorchState(): void {
+    this.torchSupported = this.camera?.torchSupported ?? false;
+    this.torchEnabled = this.camera?.torchEnabled ?? false;
 
-    this.observer = new MutationObserver(sync);
+    if (!this.torchEnabled) {
+      this.autoTorchActivated = false;
+    }
+  }
+
+  private observeCamera(): void {
+    this.observer = new MutationObserver(() => {
+      const previouslyEnabled = this.torchEnabled;
+
+      this.syncTorchState();
+
+      if (
+        previouslyEnabled !== this.torchEnabled &&
+        !this.torchChanging
+      ) {
+        this.invalidateAnalysis();
+      }
+    });
 
     this.observer.observe(this.camera, {
       attributes: true,
@@ -244,8 +322,243 @@ export class GuidedCapture extends LitElement {
       ],
     });
 
-    sync();
+    this.syncTorchState();
   }
+
+  // --------------------------------------------------
+  // Automatic torch
+  // --------------------------------------------------
+
+  resetAutoTorch(): void {
+    this.autoTorchSuppressed = false;
+    this.poorLightingSince = undefined;
+  }
+
+  private async evaluateAutoTorch(
+    report: AnalysisReport,
+  ): Promise<void> {
+    if (
+      !this.isConnected ||
+      !this.autoTorch ||
+      !this.analysisEnabled ||
+      !this.torchSupported ||
+      this.torchEnabled ||
+      this.torchChanging ||
+      this.autoTorchSuppressed ||
+      this.capturing ||
+      this.ready ||
+      report.ready
+    ) {
+      this.poorLightingSince = undefined;
+      return;
+    }
+
+    // Don't activate the torch if the barcode is already
+    // readable, even if another analyzer is failing.
+
+    if (report.results['barcode']?.passed) {
+      this.poorLightingSince = undefined;
+      return;
+    }
+
+    const brightness = report.results['brightness'];
+    const readability = report.results['readability'];
+
+    const rawIssues = readability?.metadata?.issues;
+
+    const issues = Array.isArray(rawIssues)
+      ? rawIssues as { code: string }[]
+      : [];
+
+    const hasIssue = (code: string): boolean =>
+      issues.some(issue => issue.code === code);
+
+    const luminance = readability?.metadata?.brightness;
+
+    const insufficientLighting =
+      (
+        brightness?.passed === false &&
+        brightness.message === 'Too dark'
+      ) ||
+      hasIssue('too_dark') ||
+      hasIssue('underexposed') ||
+      hasIssue('blurry') ||
+      (
+        typeof luminance === 'number' &&
+        luminance < this.autoTorchLuminanceThreshold &&
+        (
+          hasIssue('low_contrast') ||
+          hasIssue('low_dynamic_range')
+        )
+      );
+
+    const excessiveLighting =
+      (
+        brightness?.passed === false &&
+        brightness.message === 'Too bright'
+      ) ||
+      hasIssue('too_bright') ||
+      hasIssue('overexposed');
+
+    // Avoid turning on the torch for blur, positioning,
+    // or excessive glare alone.
+
+    if (!insufficientLighting || excessiveLighting) {
+      this.poorLightingSince = undefined;
+      return;
+    }
+
+    const now = performance.now();
+
+    this.poorLightingSince ??= now;
+
+    const elapsed = now - this.poorLightingSince;
+
+    const delay = Number.isFinite(this.autoTorchDelay)
+      ? Math.max(0, this.autoTorchDelay)
+      : 1500;
+
+    if (elapsed < delay) return;
+
+    this.poorLightingSince = undefined;
+
+    try {
+      await this.setTorch(true, 'automatic');
+
+      if (this.autoTorchActivated) {
+        this.dispatchEvent(
+          new CustomEvent('auto-torch-activated', {
+            bubbles: true,
+            composed: true,
+            detail: {
+              reason: 'insufficient_lighting',
+              durationMs: elapsed,
+            },
+          }),
+        );
+      }
+    } catch (error) {
+      // Don't repeatedly retry a failed hardware operation.
+
+      this.autoTorchSuppressed = true;
+
+      this.dispatchEvent(
+        new CustomEvent('auto-torch-error', {
+          bubbles: true,
+          composed: true,
+          detail: error,
+        }),
+      );
+    }
+  }
+
+  async setTorch(
+    enabled: boolean,
+    source: TorchSource = 'manual',
+  ): Promise<void> {
+    if (source === 'manual') {
+      // Manual control takes precedence over automation.
+
+      this.autoTorchSuppressed = true;
+      this.autoTorchActivated = false;
+      this.poorLightingSince = undefined;
+    }
+
+    // Serialize torch operations so manual and automatic
+    // requests cannot race against one another.
+
+    const operation = this.torchOperation.then(async () => {
+      await this.updateComplete;
+
+      if (!this.isConnected) return;
+
+      this.syncTorchState();
+
+      // Recheck automatic activation after waiting for any
+      // previous hardware operation to finish.
+
+      if (
+        source === 'automatic' &&
+        enabled &&
+        (
+          !this.autoTorch ||
+          this.autoTorchSuppressed ||
+          !this.analysisEnabled ||
+          this.capturing ||
+          this.ready
+        )
+      ) {
+        return;
+      }
+
+      if (!this.torchSupported) {
+        if (enabled) {
+          throw new Error('Torch is not supported');
+        }
+
+        return;
+      }
+
+      if (this.torchEnabled === enabled) return;
+
+      this.torchChanging = true;
+
+      // A lighting change invalidates the cached frame.
+
+      this.invalidateAnalysis();
+
+      try {
+        await this.camera.setTorch(enabled);
+
+        this.syncTorchState();
+
+        if (
+          source === 'automatic' &&
+          enabled &&
+          !this.autoTorchSuppressed
+        ) {
+          this.autoTorchActivated = this.torchEnabled;
+        } else {
+          this.autoTorchActivated = false;
+        }
+
+        await this.updateComplete;
+      } finally {
+        this.torchChanging = false;
+      }
+    });
+
+    // A rejected operation must not permanently break
+    // the torch operation queue.
+
+    this.torchOperation = operation.catch(() => {});
+
+    await operation;
+  }
+
+  async toggleTorch(): Promise<void> {
+    await this.setTorch(!this.torchEnabled, 'manual');
+  }
+
+  private async disableAutomaticTorch(): Promise<void> {
+    if (!this.autoTorchActivated) return;
+
+    try {
+      await this.setTorch(false, 'automatic');
+    } catch (error) {
+      this.dispatchEvent(
+        new CustomEvent('auto-torch-error', {
+          bubbles: true,
+          composed: true,
+          detail: error,
+        }),
+      );
+    }
+  }
+
+  // --------------------------------------------------
+  // Bounding box geometry
+  // --------------------------------------------------
 
   /**
    * Bounding box relative to the visible preview.
@@ -291,6 +604,10 @@ export class GuidedCapture extends LitElement {
     );
   }
 
+  // --------------------------------------------------
+  // Live analysis
+  // --------------------------------------------------
+
   private async analyzeLoop(
     signal: AbortSignal,
   ): Promise<void> {
@@ -302,6 +619,7 @@ export class GuidedCapture extends LitElement {
       if (
         this.analysisEnabled &&
         !this.capturing &&
+        !this.torchChanging &&
         this.analyzers.length > 0 &&
         this.stage.clientWidth > 0 &&
         this.stage.clientHeight > 0
@@ -328,7 +646,9 @@ export class GuidedCapture extends LitElement {
     }
   }
 
-  private async analyzeFrame(signal: AbortSignal): Promise<void> {
+  private async analyzeFrame(
+    signal: AbortSignal,
+  ): Promise<void> {
     const revision = this.revision;
     const analyzers = [...this.analyzers];
 
@@ -337,6 +657,7 @@ export class GuidedCapture extends LitElement {
       : 640;
 
     const timestamp = performance.now();
+
     const bitmap = await this.camera.getFullResolutionFrame();
 
     let analysisBitmap: ImageBitmap | undefined;
@@ -349,8 +670,16 @@ export class GuidedCapture extends LitElement {
       );
 
       analysisBitmap = await createImageBitmap(bitmap, {
-        resizeWidth: Math.max(1, Math.round(bitmap.width * scale)),
-        resizeHeight: Math.max(1, Math.round(bitmap.height * scale)),
+        resizeWidth: Math.max(
+          1,
+          Math.round(bitmap.width * scale),
+        ),
+
+        resizeHeight: Math.max(
+          1,
+          Math.round(bitmap.height * scale),
+        ),
+
         resizeQuality: 'medium',
       });
 
@@ -362,12 +691,15 @@ export class GuidedCapture extends LitElement {
         {
           bitmap: analysisBitmap,
           timestamp,
+
           sourceWidth: bitmap.width,
           sourceHeight: bitmap.height,
+
           boundingBox: this.getImageBoundingBox(
             analysisBitmap.width,
             analysisBitmap.height,
           ),
+
           signal,
         },
         analyzers,
@@ -377,12 +709,14 @@ export class GuidedCapture extends LitElement {
         signal.aborted ||
         revision !== this.revision ||
         this.capturing ||
+        this.torchChanging ||
         !this.analysisEnabled
       ) {
         return;
       }
 
       // Only replace the cached frame when analysis passes.
+
       if (
         report.ready &&
         performance.now() - timestamp < this.captureCacheDuration
@@ -392,12 +726,15 @@ export class GuidedCapture extends LitElement {
         this.analyzedFrame = {
           bitmap,
           analysis: report,
+
           analysisWidth: analysisBitmap.width,
           analysisHeight: analysisBitmap.height,
+
           boundingBox: this.getImageBoundingBox(
             bitmap.width,
             bitmap.height,
           ),
+
           timestamp,
         };
 
@@ -406,7 +743,9 @@ export class GuidedCapture extends LitElement {
         this.scheduleCacheExpiry();
       }
 
-      // Failed analysis no longer destroys a valid cached frame.
+      // Failed analysis does not destroy an existing
+      // valid cached frame.
+
       this.analysis = report;
       this.ready = this.hasValidCachedFrame();
 
@@ -417,6 +756,16 @@ export class GuidedCapture extends LitElement {
           composed: true,
         }),
       );
+
+      // Evaluate lighting after publishing the report.
+
+      if (
+        !signal.aborted &&
+        revision === this.revision &&
+        !this.capturing
+      ) {
+        await this.evaluateAutoTorch(report);
+      }
     } finally {
       analysisBitmap?.close();
 
@@ -426,15 +775,9 @@ export class GuidedCapture extends LitElement {
     }
   }
 
-
-
-  async start(): Promise<void> {
-    await this.updateComplete;
-
-    this.invalidateAnalysis();
-
-    await this.camera.start();
-  }
+  // --------------------------------------------------
+  // Capture cache
+  // --------------------------------------------------
 
   private hasValidCachedFrame(): boolean {
     return !!this.analyzedFrame &&
@@ -461,20 +804,52 @@ export class GuidedCapture extends LitElement {
 
   private releaseAnalyzedFrame(): void {
     clearTimeout(this.cacheExpiryTimer);
+
     this.cacheExpiryTimer = undefined;
 
     this.analyzedFrame?.bitmap.close();
     this.analyzedFrame = undefined;
   }
 
+  // --------------------------------------------------
+  // Camera lifecycle
+  // --------------------------------------------------
+
+  async start(): Promise<void> {
+    await this.updateComplete;
+
+    this.invalidateAnalysis();
+    this.resetAutoTorch();
+
+    this.autoTorchActivated = false;
+
+    await this.camera.start();
+
+    this.syncTorchState();
+  }
+
   stop(): void {
     this.camera?.stop();
+
+    this.autoTorchActivated = false;
+    this.torchEnabled = false;
+    this.torchSupported = false;
+
+    this.resetAutoTorch();
     this.invalidateAnalysis();
   }
+
+  // --------------------------------------------------
+  // Image capture
+  // --------------------------------------------------
 
   async capture(): Promise<Blob> {
     if (this.capturing) {
       throw new Error('Capture already in progress');
+    }
+
+    if (this.torchChanging) {
+      throw new Error('Camera lighting is adjusting');
     }
 
     const processor = this.captureProcessor;
@@ -489,34 +864,45 @@ export class GuidedCapture extends LitElement {
     this.capturing = true;
 
     // Transfer ownership of the cached frame.
+
     const frame = this.analyzedFrame;
     this.analyzedFrame = undefined;
 
     this.invalidateAnalysis();
 
     try {
+      let output: Blob;
+
       if (!processor) {
-        return await this.camera.capture();
+        output = await this.camera.capture();
+      } else {
+        if (!frame) {
+          throw new Error('No validated frame available');
+        }
+
+        output = await processor.process(frame);
       }
 
-      if (!frame) {
-        throw new Error('No validated frame available');
-      }
+      // Only disable automatically activated lighting.
+      // Manually enabled lighting remains under user control.
 
-      return await processor.process(frame);
+      await this.disableAutomaticTorch();
+
+      // Prevent immediate automatic reactivation while
+      // the consumer transitions into its review screen.
+
+      this.autoTorchSuppressed = true;
+
+      return output;
     } finally {
       frame?.bitmap.close();
       this.capturing = false;
     }
   }
 
-  async setTorch(enabled: boolean): Promise<void> {
-    await this.camera.setTorch(enabled);
-  }
-
-  async toggleTorch(): Promise<void> {
-    await this.camera.toggleTorch();
-  }
+  // --------------------------------------------------
+  // Rendering
+  // --------------------------------------------------
 
   private renderBoundingBox() {
     const box = this.boundingBox;
@@ -554,13 +940,17 @@ export class GuidedCapture extends LitElement {
             ${width * 100}%,
             ${maxHeight * 100 * aspectRatio}cqh
           )`,
+
           aspectRatio: String(aspectRatio),
+
           borderRadius: `${box.borderRadius ?? 12}px`,
           borderWidth: `${box.borderWidth ?? 2}px`,
           borderStyle: 'solid',
+
           borderColor: this.ready
             ? '#22c55e'
             : box.borderColor ?? 'white',
+
           '--mask-color': `rgba(0, 0, 0, ${opacity})`,
         })}
       ></div>

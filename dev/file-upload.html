@@ -23,7 +23,7 @@
       }
 
       main {
-        max-width: 1400px;
+        max-width: 1800px;
         margin: 0 auto;
       }
 
@@ -38,7 +38,7 @@
 
       .playground {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 24px;
       }
 
@@ -58,6 +58,7 @@
         color: #a1a1aa;
         font-size: 14px;
         margin: 0 0 24px;
+        min-height: 42px;
       }
 
       .upload {
@@ -76,7 +77,10 @@
       }
 
       .upload input {
-        display: none;
+        display: block;
+        max-width: 100%;
+        margin: 12px auto 0;
+        font-size: 12px;
       }
 
       .upload:has(input:disabled) {
@@ -278,15 +282,23 @@
 
       .duration {
         margin-top: 16px;
-        color: #71717a;
+        color: #a1a1aa;
         font-size: 12px;
+        line-height: 1.8;
+        white-space: pre-line;
       }
 
       [hidden] {
         display: none !important;
       }
 
-      @media (max-width: 900px) {
+      @media (max-width: 1200px) {
+        .playground {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 800px) {
         .playground {
           grid-template-columns: 1fr;
         }
@@ -308,127 +320,73 @@
 
       <p class="subtitle">
         Client-side image validation and extraction.
-        Images never leave your device.
       </p>
 
-      <div class="playground">
-        <!-- Headshot uploader -->
-
-        <section class="panel" id="headshot">
-          <h2>Headshot</h2>
-
-          <p class="description">
-            Brightness detection, face validation, and automatic
-            portrait extraction.
-          </p>
-
-          <label class="upload">
-            <input type="file" accept="image/*" disabled>
-
-            <span class="upload-title">
-              Select a headshot
-            </span>
-
-            <span class="upload-hint">
-              Choose an image from your device
-            </span>
-          </label>
-
-          <div class="status processing">
-            Initializing face detector…
-          </div>
-
-          <div class="images">
-            <div class="image-container">
-              <h3>Original</h3>
-
-              <div class="image-preview">
-                <span class="placeholder">No image selected</span>
-                <img class="original-image" hidden alt="Original">
-              </div>
-
-              <div class="image-info original-info"></div>
-            </div>
-
-            <div class="image-container">
-              <h3>Processed</h3>
-
-              <div class="image-preview">
-                <span class="placeholder">Awaiting valid image</span>
-                <img class="output-image" hidden alt="Processed">
-              </div>
-
-              <div class="image-info output-info"></div>
-            </div>
-          </div>
-
-          <div class="results">
-            <h3>Analyzer Results</h3>
-            <div class="analyzer-results"></div>
-          </div>
-
-          <div class="duration"></div>
-        </section>
-
-        <!-- Document uploader -->
-
-        <section class="panel" id="document">
-          <h2>Document</h2>
-
-          <p class="description">
-            Brightness detection, document validation, perspective
-            correction, and extraction.
-          </p>
-
-          <label class="upload">
-            <input type="file" accept="image/*" disabled>
-
-            <span class="upload-title">
-              Select a document
-            </span>
-
-            <span class="upload-hint">
-              ID cards, forms, and other documents
-            </span>
-          </label>
-
-          <div class="status">
-            Ready to upload
-          </div>
-
-          <div class="images">
-            <div class="image-container">
-              <h3>Original</h3>
-
-              <div class="image-preview">
-                <span class="placeholder">No image selected</span>
-                <img class="original-image" hidden alt="Original">
-              </div>
-
-              <div class="image-info original-info"></div>
-            </div>
-
-            <div class="image-container">
-              <h3>Processed</h3>
-
-              <div class="image-preview">
-                <span class="placeholder">Awaiting valid image</span>
-                <img class="output-image" hidden alt="Processed">
-              </div>
-
-              <div class="image-info output-info"></div>
-            </div>
-          </div>
-
-          <div class="results">
-            <h3>Analyzer Results</h3>
-            <div class="analyzer-results"></div>
-          </div>
-
-          <div class="duration"></div>
-        </section>
-      </div>
+      <div class="playground" id="playground"></div>
     </main>
+
+    <template id="uploader-template">
+      <section class="panel">
+        <h2 class="panel-title"></h2>
+        <p class="description"></p>
+
+        <label class="upload">
+          <span class="upload-title"></span>
+          <span class="upload-hint"></span>
+
+          <input type="file" accept="image/*" disabled>
+        </label>
+
+        <div class="status processing" role="status">
+          Initializing…
+        </div>
+
+        <div class="images">
+          <div class="image-container">
+            <h3>Original</h3>
+
+            <div class="image-preview">
+              <span class="placeholder">
+                No image selected
+              </span>
+
+              <img
+                class="original-image"
+                hidden
+                alt="Original image"
+              >
+            </div>
+
+            <div class="image-info original-info"></div>
+          </div>
+
+          <div class="image-container">
+            <h3>Processed</h3>
+
+            <div class="image-preview">
+              <span class="placeholder">
+                Awaiting valid image
+              </span>
+
+              <img
+                class="output-image"
+                hidden
+                alt="Processed image"
+              >
+            </div>
+
+            <div class="image-info output-info"></div>
+          </div>
+        </div>
+
+        <div class="results">
+          <h3>Analyzer Results</h3>
+          <div class="analyzer-results"></div>
+        </div>
+
+        <div class="duration"></div>
+      </section>
+    </template>
 
     <script type="module">
       import {
@@ -443,9 +401,78 @@
         FaceCaptureProcessor,
         ScanicAnalyzer,
         ScanicCaptureProcessor,
+        BarcodeAnalyzer,
+        BarcodeCaptureProcessor,
       } from '/src/image-capture/index.ts';
 
+      // --------------------------------------------------
+      // Panel creation
+      // --------------------------------------------------
+
+      const playground = document.querySelector('#playground');
+
+      const template =
+        document.querySelector('#uploader-template');
+
+      function createPanel({
+        id,
+        title,
+        description,
+        uploadTitle,
+        uploadHint,
+      }) {
+        const fragment = template.content.cloneNode(true);
+        const panel = fragment.querySelector('.panel');
+
+        panel.id = id;
+
+        panel.querySelector('.panel-title').textContent =
+          title;
+
+        panel.querySelector('.description').textContent =
+          description;
+
+        panel.querySelector('.upload-title').textContent =
+          uploadTitle;
+
+        panel.querySelector('.upload-hint').textContent =
+          uploadHint;
+
+        playground.append(fragment);
+
+        return panel;
+      }
+
+      const headshotPanel = createPanel({
+        id: 'headshot',
+        title: 'Headshot',
+        description:
+          'Face detection, brightness validation, and portrait extraction.',
+        uploadTitle: 'Select a headshot',
+        uploadHint: 'Choose a photo containing one face',
+      });
+
+      const documentPanel = createPanel({
+        id: 'document',
+        title: 'Document',
+        description:
+          'Document detection, perspective correction, and extraction.',
+        uploadTitle: 'Select a document',
+        uploadHint: 'ID cards, forms, and other documents',
+      });
+
+      const barcodePanel = createPanel({
+        id: 'barcode',
+        title: 'PDF417 Barcode',
+        description:
+          'PDF417 readability validation and lossless barcode extraction.',
+        uploadTitle: 'Select a barcode image',
+        uploadHint: 'Back of an ID or an isolated PDF417 barcode',
+      });
+
+      // --------------------------------------------------
       // Utilities
+      // --------------------------------------------------
 
       function formatBytes(bytes) {
         if (bytes < 1024) {
@@ -460,7 +487,9 @@
       }
 
       function formatAnalyzerName(id) {
-        return id.replaceAll('-', ' ').replaceAll('_', ' ');
+        return id
+          .replaceAll('-', ' ')
+          .replaceAll('_', ' ');
       }
 
       function setStatus(panel, message, type = '') {
@@ -513,10 +542,13 @@
 
         info.textContent =
           `${image.naturalWidth} × ${image.naturalHeight}px` +
-          ` · ${formatBytes(blob.size)}`;
+          ` · ${formatBytes(blob.size)}` +
+          ` · ${blob.type || 'Unknown format'}`;
       }
 
+      // --------------------------------------------------
       // Analyzer result rendering
+      // --------------------------------------------------
 
       function renderAnalyzerResults(container, report) {
         container.replaceChildren();
@@ -597,7 +629,9 @@
         }
       }
 
+      // --------------------------------------------------
       // Reusable uploader controller
+      // --------------------------------------------------
 
       function setupUploader(panel, options) {
         const pipeline = new ImageProcessingPipeline();
@@ -607,8 +641,11 @@
         const original = panel.querySelector('.original-image');
         const output = panel.querySelector('.output-image');
 
-        const originalInfo = panel.querySelector('.original-info');
-        const outputInfo = panel.querySelector('.output-info');
+        const originalInfo =
+          panel.querySelector('.original-info');
+
+        const outputInfo =
+          panel.querySelector('.output-info');
 
         const analyzerResults =
           panel.querySelector('.analyzer-results');
@@ -645,22 +682,31 @@
 
           const started = performance.now();
 
+          let analysisDuration;
+          let processingDuration;
+
           try {
             await showImage(original, originalInfo, file);
 
             // Analyze independently so results remain visible
-            // even if the processor subsequently throws.
+            // even if processing subsequently fails.
+
+            const analysisStarted = performance.now();
 
             const validation = await pipeline.process(file, {
               analyzers: options.analyzers,
               analysisResolution: options.analysisResolution,
             });
 
+            analysisDuration =
+              performance.now() - analysisStarted;
+
             renderAnalyzerResults(
               analyzerResults,
               validation.analysis,
             );
 
+            // Only invoke the processor if every analyzer passes.
             if (!validation.passed) {
               const failed = Object.values(
                 validation.analysis.results,
@@ -685,8 +731,10 @@
 
             setPlaceholder(output, 'Processing image…');
 
-            // Reuse the validation metadata against the
-            // same uploaded image.
+            const processingStarted = performance.now();
+
+            // Reuse detection metadata from the same image.
+            // No additional face/document/barcode detection.
 
             const bitmap = await createImageBitmap(file);
 
@@ -720,6 +768,9 @@
               });
             } finally {
               bitmap.close();
+
+              processingDuration =
+                performance.now() - processingStarted;
             }
 
             await showImage(output, outputInfo, processed);
@@ -729,8 +780,6 @@
               'All analyzers passed. Image processed.',
               'success',
             );
-
-            console.log('Processed image:', processed);
           } catch (error) {
             console.error('Image processing failed:', error);
 
@@ -746,12 +795,29 @@
           } finally {
             const elapsed = performance.now() - started;
 
-            duration.textContent =
-              `Total processing time: ${elapsed.toFixed(1)}ms`;
+            const timings = [];
+
+            if (analysisDuration !== undefined) {
+              timings.push(
+                `Analysis: ${analysisDuration.toFixed(1)}ms`,
+              );
+            }
+
+            if (processingDuration !== undefined) {
+              timings.push(
+                `Processing: ${processingDuration.toFixed(1)}ms`,
+              );
+            }
+
+            timings.push(
+              `Total: ${elapsed.toFixed(1)}ms`,
+            );
+
+            duration.textContent = timings.join('\n');
 
             input.disabled = false;
 
-            // Allow selecting the same file again.
+            // Allow selecting the same image again.
             input.value = '';
 
             busy = false;
@@ -759,13 +825,12 @@
         });
       }
 
+      // --------------------------------------------------
       // Document pipeline
-      //
-      // Initialize immediately, independently of MediaPipe.
+      // --------------------------------------------------
 
-      setupUploader(
-        document.querySelector('#document'),
-        {
+      try {
+        setupUploader(documentPanel, {
           analysisResolution: 640,
 
           analyzers: [
@@ -781,78 +846,136 @@
             padding: 0.08,
             quality: 0.98,
           }),
-        },
-      );
-
-      // Headshot pipeline
-
-      const headshotPanel = document.querySelector('#headshot');
-
-      let detector;
-
-      try {
-        const vision = await FilesetResolver.forVisionTasks(
-          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm',
-        );
-
-        detector = await FaceDetector.createFromOptions(
-          vision,
-          {
-            baseOptions: {
-              modelAssetPath:
-                'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite',
-
-              delegate: 'CPU',
-            },
-
-            runningMode: 'IMAGE',
-            minDetectionConfidence: 0.5,
-          },
-        );
-
-        setupUploader(headshotPanel, {
-          analysisResolution: 640,
-
-          analyzers: [
-            new BrightnessAnalyzer(60, 220),
-
-            new FaceAnalyzer({
-              detector,
-              minConfidence: 0.3,
-              minCoverage: 0.01,
-              maxCoverage: 0.85,
-              centerTolerance: 1,
-            }),
-          ],
-
-          processor: new FaceCaptureProcessor({
-            aspectRatio: 1 / 1,
-            padding: 0.5,
-            verticalOffset: -0.15,
-            maxDimension: 1600,
-            quality: 0.98,
-          }),
         });
       } catch (error) {
-        console.error('MediaPipe initialization failed:', error);
+        console.error('Scanic initialization failed:', error);
 
         setStatus(
-          headshotPanel,
-          'Unable to initialize face detector',
+          documentPanel,
+          'Unable to initialize document detector',
           'failure',
         );
       }
 
+      // --------------------------------------------------
+      // PDF417 barcode pipeline
+      // --------------------------------------------------
+
+      try {
+        setupUploader(barcodePanel, {
+          analysisResolution: 1600,
+
+          analyzers: [
+            new BarcodeAnalyzer({
+              requiredFormats: ['pdf417'],
+              minCount: 1,
+              minCoverage: 0,
+              includeRawValue: true,
+            }),
+          ],
+
+          processor: new BarcodeCaptureProcessor({
+            format: 'pdf417',
+            selection: 'largest',
+            padding: 0.15,
+            mimeType: 'image/png',
+          }),
+        });
+      } catch (error) {
+        console.error('Barcode initialization failed:', error);
+
+        setStatus(
+          barcodePanel,
+          'Unable to initialize barcode detector',
+          'failure',
+        );
+      }
+
+      // --------------------------------------------------
+      // Headshot pipeline
+      // --------------------------------------------------
+
+      let detector;
+
+      async function initializeHeadshot() {
+        setStatus(
+          headshotPanel,
+          'Initializing face detector…',
+          'processing',
+        );
+
+        try {
+          const vision = await FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm',
+          );
+
+          detector = await FaceDetector.createFromOptions(
+            vision,
+            {
+              baseOptions: {
+                modelAssetPath:
+                  'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite',
+
+                delegate: 'CPU',
+              },
+
+              runningMode: 'IMAGE',
+              minDetectionConfidence: 0.5,
+            },
+          );
+
+          setupUploader(headshotPanel, {
+            analysisResolution: 640,
+
+            analyzers: [
+              new BrightnessAnalyzer(60, 220),
+
+              new FaceAnalyzer({
+                detector,
+                minConfidence: 0.3,
+                minCoverage: 0.01,
+                maxCoverage: 0.85,
+                centerTolerance: 1,
+              }),
+            ],
+
+            processor: new FaceCaptureProcessor({
+              aspectRatio: 1 / 1,
+              padding: 0.5,
+              verticalOffset: -0.15,
+              maxDimension: 1600,
+              quality: 0.98,
+            }),
+          });
+        } catch (error) {
+          console.error(
+            'MediaPipe initialization failed:',
+            error,
+          );
+
+          setStatus(
+            headshotPanel,
+            'Unable to initialize face detector',
+            'failure',
+          );
+        }
+      }
+
+      void initializeHeadshot();
+
+      // --------------------------------------------------
       // Cleanup
+      // --------------------------------------------------
 
       window.addEventListener('pagehide', event => {
         if (event.persisted) return;
 
         detector?.close();
 
-        document.querySelectorAll('img').forEach(image => {
-          clearImage(image);
-        });
+        document.querySelectorAll('.image-preview img')
+          .forEach(image => {
+            clearImage(image);
+          });
       });
     </script>
   </body>
