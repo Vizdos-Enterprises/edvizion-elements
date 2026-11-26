@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "verbatimModuleSyntax": true,
+    "noEmitOnError": true,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "experimentalDecorators": false,
+    "useDefineForClassFields": true,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts"]
+}

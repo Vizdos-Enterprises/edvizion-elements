@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Image Capture Playground</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    >
+
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: black;
+        font-family: system-ui, sans-serif;
+      }
+
+      image-capture,
+      #result {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      image-capture {
+        z-index: 0;
+      }
+
+      image-capture::part(preview) {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      image-capture::part(video),
+      #result {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: center;
+      }
+
+      #result {
+        background: black;
+        z-index: 1;
+      }
+
+      #torch {
+        position: fixed;
+        top: calc(16px + env(safe-area-inset-top, 0px));
+        right: calc(16px + env(safe-area-inset-right, 0px));
+        z-index: 10;
+
+        display: none;
+        align-items: center;
+        justify-content: center;
+
+        width: 48px;
+        height: 48px;
+        border: none;
+        border-radius: 50%;
+        background: #0009;
+        color: white;
+        cursor: pointer;
+        backdrop-filter: blur(12px);
+      }
+
+      #torch svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      #torch-on {
+        display: none;
+      }
+
+      body:has(image-capture[torch-supported]) #torch {
+        display: flex;
+      }
+
+      body:has(image-capture[torch-enabled]) #torch {
+        background: #facc15;
+        color: black;
+      }
+
+      body:has(image-capture[torch-enabled]) #torch-on {
+        display: block;
+      }
+
+      body:has(image-capture[torch-enabled]) #torch-off {
+        display: none;
+      }
+
+      body:has(#result:not([hidden])) #torch {
+        display: none;
+      }
+
+      #torch:disabled {
+        opacity: 0.5;
+        cursor: wait;
+      }
+
+      #controls {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 10;
+
+        padding-top: 16px;
+        padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+        padding-left: calc(16px + env(safe-area-inset-left, 0px));
+        padding-right: calc(16px + env(safe-area-inset-right, 0px));
+
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+
+        pointer-events: none;
+      }
+
+      #capture {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 16px 32px;
+        border: none;
+        border-radius: 999px;
+        background: white;
+        color: black;
+        font-size: 16px;
+        font-weight: 600;
+        white-space: nowrap;
+        cursor: pointer;
+        box-shadow: 0 4px 20px #0005;
+        pointer-events: auto;
+      }
+
+      #capture:disabled {
+        cursor: wait;
+      }
+
+      #hint {
+        color: white;
+        font-size: 14px;
+        text-shadow: 0 1px 6px black;
+      }
+
+      #spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #ddd;
+        border-top-color: black;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+
+      #spinner,
+      #capturing-label,
+      #hint {
+        display: none;
+      }
+
+      body:has(image-capture[capturing]) #spinner,
+      body:has(image-capture[capturing]) #capturing-label,
+      body:has(image-capture[capturing]) #hint {
+        display: block;
+      }
+
+      body:has(image-capture[capturing]) #label {
+        display: none;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <image-capture></image-capture>
+
+    <img id="result" hidden alt="Captured photo">
+
+    <button id="torch" aria-label="Toggle torch" aria-pressed="false">
+      <svg
+        id="torch-on"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M13 2 3 14h8l-1 8 11-12h-9l1-8z"/>
+      </svg>
+
+      <svg
+        id="torch-off"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m12 5 1-3-3 3"/>
+        <path d="M18 10h3l-3 3"/>
+        <path d="m8 8-5 6h8l-1 8 5-6"/>
+        <path d="m2 2 20 20"/>
+      </svg>
+    </button>
+
+    <div id="controls">
+      <span id="hint">Hold steady</span>
+
+      <button id="capture">
+        <span id="spinner"></span>
+        <span id="capturing-label">Capturing…</span>
+        <span id="label">Capture Photo</span>
+      </button>
+    </div>
+
+    <script type="module">
+      import '/src/image-capture/index.ts';
+
+      const camera = document.querySelector('image-capture');
+      const result = document.querySelector('#result');
+      const button = document.querySelector('#capture');
+      const label = document.querySelector('#label');
+      const torch = document.querySelector('#torch');
+
+      let captured = false;
+      let photoURL;
+
+      function clearPhoto() {
+        result.hidden = true;
+        result.removeAttribute('src');
+
+        if (photoURL) {
+          URL.revokeObjectURL(photoURL);
+          photoURL = undefined;
+        }
+      }
+
+      function syncTorch() {
+        torch.setAttribute(
+          'aria-pressed',
+          String(camera.torchEnabled)
+        );
+      }
+
+      torch.addEventListener('click', async () => {
+        if (camera.capturing || torch.disabled) return;
+
+        torch.disabled = true;
+        button.disabled = true;
+
+        try {
+          await camera.toggleTorch();
+        } catch (error) {
+          console.error('Torch failed:', error);
+        } finally {
+          syncTorch();
+          torch.disabled = false;
+          button.disabled = false;
+        }
+      });
+
+      button.addEventListener('click', async () => {
+        if (camera.capturing || button.disabled) return;
+
+        if (captured) {
+          clearPhoto();
+
+          captured = false;
+          label.textContent = 'Capture Photo';
+
+          return;
+        }
+
+        button.disabled = true;
+        torch.disabled = true;
+
+        try {
+          const photo = await camera.capture();
+
+          label.textContent = 'Processing…';
+
+          photoURL = URL.createObjectURL(photo);
+          result.src = photoURL;
+
+          await result.decode();
+
+          result.hidden = false;
+          captured = true;
+
+          if (camera.torchEnabled) {
+            try {
+              await camera.setTorch(false);
+            } catch (error) {
+              console.warn('Failed to disable torch:', error);
+            }
+
+            syncTorch();
+          }
+
+          console.log('Captured:', photo);
+        } catch (error) {
+          clearPhoto();
+          captured = false;
+
+          console.error('Capture failed:', error);
+        } finally {
+          button.disabled = false;
+          torch.disabled = false;
+
+          label.textContent = captured
+            ? 'Recapture'
+            : 'Capture Photo';
+        }
+      });
+    </script>
+  </body>
+</html>
