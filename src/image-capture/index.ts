@@ -12,3 +12,5 @@ export * from './processors/scanic.js';
 
 export * from './analyzers/face.js';
 export * from './processors/face.js';
+
+export * from './analysis/image-pipeline.js';
