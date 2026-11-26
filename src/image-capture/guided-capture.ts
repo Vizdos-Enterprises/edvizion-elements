@@ -7,6 +7,10 @@ import {
 
 import { styleMap } from 'lit/directives/style-map.js';
 
+import {
+  BoundingBoxCaptureProcessor,
+} from './processors/bounding-box.js';
+
 import './image-capture.js';
 import type { ImageCapture } from './image-capture.js';
 
@@ -19,6 +23,7 @@ import type {
   BoundingBox,
   Rectangle,
   CaptureProcessor,
+  DetailedCaptureResult,
 } from './analysis/types.js';
 
 type TorchSource = 'manual' | 'automatic';
@@ -84,7 +89,7 @@ export class GuidedCapture extends LitElement {
 
   @property({
     type: Number,
-    attribute: 'auto-torch-delay',
+    attribute: 'auto-torch-luminance-threshold',
   })
   accessor autoTorchLuminanceThreshold = 120;
 
@@ -93,6 +98,10 @@ export class GuidedCapture extends LitElement {
     attribute: 'capture-cache-duration',
   })
   accessor captureCacheDuration = 1500;
+
+  @property({ attribute: false })
+  accessor boundingBoxProcessor: CaptureProcessor =
+    new BoundingBoxCaptureProcessor();
 
   @property({ attribute: false })
   accessor analysis: AnalysisReport | undefined = undefined;
@@ -124,7 +133,7 @@ export class GuidedCapture extends LitElement {
 
   private analyzedFrame?: {
     bitmap: ImageBitmap;
-    analysis: AnalysisReport;
+    analysis?: AnalysisReport;
     analysisWidth: number;
     analysisHeight: number;
     boundingBox?: Rectangle;
@@ -842,8 +851,34 @@ export class GuidedCapture extends LitElement {
   // --------------------------------------------------
   // Image capture
   // --------------------------------------------------
-
   async capture(): Promise<Blob> {
+    const result = await this.captureInternal(false);
+    return result.processed;
+  }
+
+  async captureDetailed(): Promise<DetailedCaptureResult> {
+    const result = await this.captureInternal(true);
+
+    if (!result.boundingBox) {
+      throw new Error('Bounding box image unavailable');
+    }
+
+    return {
+      processed: result.processed,
+      boundingBox: result.boundingBox,
+      analysis: result.analysis,
+      timestamp: result.timestamp,
+    };
+  }
+
+  private async captureInternal(
+    includeBoundingBox: boolean,
+  ): Promise<{
+    processed: Blob;
+    boundingBox?: Blob;
+    analysis?: AnalysisReport;
+    timestamp: number;
+  }> {
     if (this.capturing) {
       throw new Error('Capture already in progress');
     }
@@ -853,6 +888,7 @@ export class GuidedCapture extends LitElement {
     }
 
     const processor = this.captureProcessor;
+    const boundingBoxProcessor = this.boundingBoxProcessor;
 
     if (processor && !this.hasValidCachedFrame()) {
       this.releaseAnalyzedFrame();
@@ -865,37 +901,91 @@ export class GuidedCapture extends LitElement {
 
     // Transfer ownership of the cached frame.
 
-    const frame = this.analyzedFrame;
-    this.analyzedFrame = undefined;
+    let frame = this.hasValidCachedFrame()
+      ? this.analyzedFrame
+      : undefined;
+
+    if (frame) {
+      this.analyzedFrame = undefined;
+    }
 
     this.invalidateAnalysis();
 
     try {
-      let output: Blob;
+      let processed: Blob;
+      let boundingBox: Blob | undefined;
 
-      if (!processor) {
-        output = await this.camera.capture();
-      } else {
-        if (!frame) {
+      if (!processor && !includeBoundingBox) {
+        // Preserve the existing unprocessed capture behavior.
+
+        const timestamp = performance.now();
+
+        processed = await this.camera.capture();
+
+        await this.disableAutomaticTorch();
+
+        this.autoTorchSuppressed = true;
+
+        return {
+          processed,
+          timestamp,
+        };
+      }
+
+      // If no processor requires a validated frame, allow
+      // capturing a fresh frame when there is no valid cache.
+
+      if (!frame) {
+        if (processor) {
           throw new Error('No validated frame available');
         }
 
-        output = await processor.process(frame);
+        const timestamp = performance.now();
+
+        const bitmap =
+          await this.camera.getFullResolutionFrame();
+
+        frame = {
+          bitmap,
+          analysis: undefined,
+          analysisWidth: bitmap.width,
+          analysisHeight: bitmap.height,
+          boundingBox: undefined,
+          timestamp,
+        };
+
+        frame.boundingBox = this.getImageBoundingBox(
+          bitmap.width,
+          bitmap.height,
+        );
       }
 
-      // Only disable automatically activated lighting.
-      // Manually enabled lighting remains under user control.
+      // Generate both images before releasing the bitmap.
+
+      if (includeBoundingBox) {
+        boundingBox = await boundingBoxProcessor.process(frame);
+      }
+
+      if (processor) {
+        processed = await processor.process(frame);
+      } else {
+        processed = boundingBox ??
+          await boundingBoxProcessor.process(frame);
+      }
 
       await this.disableAutomaticTorch();
 
-      // Prevent immediate automatic reactivation while
-      // the consumer transitions into its review screen.
-
       this.autoTorchSuppressed = true;
 
-      return output;
+      return {
+        processed,
+        boundingBox,
+        analysis: frame.analysis,
+        timestamp: frame.timestamp,
+      };
     } finally {
       frame?.bitmap.close();
+
       this.capturing = false;
     }
   }

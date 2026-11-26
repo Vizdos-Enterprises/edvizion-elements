@@ -20,3 +20,4 @@ export * from './analyzers/barcode.js';
 export * from './processors/barcode.js';
 
 export * from './analyzers/readability.js';
+export * from './processors/bounding-box.js';

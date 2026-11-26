@@ -37,12 +37,100 @@
         z-index: 0;
       }
 
+      /* Capture review */
+
       #result {
         z-index: 1;
+        background: #09090b;
+        overflow-y: auto;
+
+        padding: 24px;
+        padding-top: calc(24px + env(safe-area-inset-top, 0px));
+        padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+      }
+
+      #review-content {
+        max-width: 800px;
+        margin: 0 auto;
+
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+      }
+
+      .review-header {
+        text-align: center;
+      }
+
+      .review-header h2 {
+        margin: 0;
+        font-size: 22px;
+      }
+
+      .review-header p {
+        margin: 8px 0 0;
+        color: #86efac;
+        font-size: 14px;
+      }
+
+      .review-image {
+        min-width: 0;
+        padding: 16px;
+        border: 1px solid #27272a;
+        border-radius: 16px;
+        background: #18181b;
+      }
+
+      .review-image h3 {
+        margin: 0 0 6px;
+        font-size: 16px;
+      }
+
+      .review-description {
+        margin: 0 0 16px;
+        font-size: 13px;
+        color: #a1a1aa;
+      }
+
+      .review-image img {
+        display: block;
+        width: 100%;
+        height: auto;
+        max-height: 45dvh;
+
         object-fit: contain;
-        object-position: center;
+        border-radius: 8px;
         background: black;
       }
+
+      .review-image-meta {
+        margin-top: 12px;
+        font-size: 12px;
+        color: #a1a1aa;
+        line-height: 1.6;
+        overflow-wrap: anywhere;
+      }
+
+      #review-analysis {
+        padding: 16px;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        background: #18181b;
+      }
+
+      #review-analysis summary {
+        font-size: 14px;
+        cursor: pointer;
+      }
+
+      #review-analysis-content {
+        font-size: 11px;
+        overflow-x: auto;
+        color: #d4d4d8;
+        line-height: 1.6;
+      }
+
+      /* Live camera guidance */
 
       #guidance {
         position: fixed;
@@ -72,6 +160,8 @@
         color: #ddd;
         text-shadow: 0 2px 8px #000a;
       }
+
+      /* Torch */
 
       #torch {
         position: fixed;
@@ -129,6 +219,8 @@
         display: none;
       }
 
+      /* Controls */
+
       #controls {
         position: fixed;
         bottom: 0;
@@ -149,6 +241,13 @@
         pointer-events: none;
       }
 
+      body:has(#result:not([hidden])) #controls {
+        background: linear-gradient(
+          transparent,
+          #09090b 35%
+        );
+      }
+
       #analysis-results {
         display: flex;
         flex-wrap: wrap;
@@ -163,7 +262,6 @@
         gap: 6px;
 
         padding: 8px 12px;
-
         border-radius: 999px;
         background: #000a;
         backdrop-filter: blur(12px);
@@ -193,6 +291,8 @@
         background: currentColor;
       }
 
+      /* Live readability metrics */
+
       #metrics {
         width: min(100%, 420px);
         padding: 12px 16px;
@@ -203,7 +303,6 @@
 
         font-size: 11px;
         font-family: monospace;
-
         pointer-events: auto;
       }
 
@@ -240,6 +339,8 @@
         color: #fde68a;
       }
 
+      /* Capture button */
+
       #capture {
         display: flex;
         align-items: center;
@@ -269,7 +370,9 @@
           opacity 150ms ease;
       }
 
-      body:has(guided-capture[ready]) #capture {
+      body:has(guided-capture[ready]):not(
+        :has(#result:not([hidden]))
+      ) #capture {
         background: #22c55e;
         color: black;
       }
@@ -312,38 +415,6 @@
         display: none;
       }
 
-      #result-meta {
-        position: fixed;
-
-        top: calc(16px + env(safe-area-inset-top, 0px));
-        left: calc(16px + env(safe-area-inset-left, 0px));
-        right: calc(16px + env(safe-area-inset-right, 0px));
-
-        z-index: 12;
-
-        display: flex;
-        justify-content: center;
-
-        pointer-events: none;
-      }
-
-      #result-meta-inner {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-
-        max-width: min(100%, 900px);
-
-        padding: 10px 14px;
-
-        border-radius: 12px;
-        background: #000a;
-        backdrop-filter: blur(12px);
-
-        font-size: 13px;
-        text-align: center;
-      }
-
       @keyframes spin {
         to {
           transform: rotate(360deg);
@@ -358,23 +429,68 @@
 
   <body>
     <guided-capture
-        auto-torch
-        auto-torch-delay="1500"
+      auto-torch
+      auto-torch-delay="1500"
+      auto-torch-luminance-threshold="120"
       facing-mode="environment"
       analysis-fps="5"
       analysis-resolution="4096"
       capture-cache-duration="1500"
     ></guided-capture>
 
-    <img
-      id="result"
-      hidden
-      alt="Captured PDF417 barcode"
-    >
+    <!-- Capture review -->
 
-    <div id="result-meta" hidden>
-      <div id="result-meta-inner"></div>
+    <div id="result" hidden>
+      <div id="review-content">
+        <header class="review-header">
+          <h2>Capture Complete</h2>
+          <p>PDF417 barcode successfully verified</p>
+        </header>
+
+        <section class="review-image">
+          <h3>Full ID Image</h3>
+
+          <p class="review-description">
+            Original image within the capture bounding box.
+          </p>
+
+          <img
+            id="bounding-box-image"
+            alt="Full captured ID"
+          >
+
+          <div
+            class="review-image-meta"
+            id="bounding-box-meta"
+          ></div>
+        </section>
+
+        <section class="review-image">
+          <h3>Extracted PDF417 Barcode</h3>
+
+          <p class="review-description">
+            Isolated, lossless barcode image.
+          </p>
+
+          <img
+            id="processed-image"
+            alt="Extracted PDF417 barcode"
+          >
+
+          <div
+            class="review-image-meta"
+            id="processed-meta"
+          ></div>
+        </section>
+
+        <details id="review-analysis">
+          <summary>Captured frame analysis</summary>
+          <pre id="review-analysis-content"></pre>
+        </details>
+      </div>
     </div>
+
+    <!-- Live camera UI -->
 
     <div id="guidance">
       <h2>Scan the Back of Your ID</h2>
@@ -436,14 +552,28 @@
       import {
         BarcodeAnalyzer,
         BarcodeCaptureProcessor,
+        BoundingBoxCaptureProcessor,
         ReadabilityAnalyzer,
       } from '/src/image-capture/index.ts';
 
       const camera = document.querySelector('guided-capture');
 
       const result = document.querySelector('#result');
-      const resultMeta = document.querySelector('#result-meta');
-      const resultMetaInner = document.querySelector('#result-meta-inner');
+
+      const boundingBoxImage =
+        document.querySelector('#bounding-box-image');
+
+      const processedImage =
+        document.querySelector('#processed-image');
+
+      const boundingBoxMeta =
+        document.querySelector('#bounding-box-meta');
+
+      const processedMeta =
+        document.querySelector('#processed-meta');
+
+      const reviewAnalysis =
+        document.querySelector('#review-analysis-content');
 
       const button = document.querySelector('#capture');
       const label = document.querySelector('#label');
@@ -460,7 +590,11 @@
 
       let captured = false;
       let busy = false;
-      let photoURL;
+
+      let boundingBoxURL;
+      let processedURL;
+
+      let latestReport;
 
       // --------------------------------------------------
       // Guided capture configuration
@@ -490,8 +624,6 @@
         analysisResolution: 640,
         tileSize: 32,
 
-        // Quality issues should provide guidance,
-        // not prevent successfully decoded captures.
         advisory: true,
       };
 
@@ -513,6 +645,8 @@
         }),
       ];
 
+      // Isolated barcode output.
+
       camera.captureProcessor = new BarcodeCaptureProcessor({
         format: 'pdf417',
         selection: 'largest',
@@ -520,21 +654,96 @@
         mimeType: 'image/png',
       });
 
+      // Full bounding box output.
+
+      camera.boundingBoxProcessor =
+        new BoundingBoxCaptureProcessor({
+          quality: 0.98,
+          mimeType: 'image/jpeg',
+        });
+
       // --------------------------------------------------
       // Photo lifecycle
       // --------------------------------------------------
 
       function clearPhoto() {
         result.hidden = true;
-        result.removeAttribute('src');
 
-        resultMeta.hidden = true;
-        resultMetaInner.textContent = '';
+        boundingBoxImage.removeAttribute('src');
+        processedImage.removeAttribute('src');
 
-        if (photoURL) {
-          URL.revokeObjectURL(photoURL);
-          photoURL = undefined;
+        boundingBoxMeta.textContent = '';
+        processedMeta.textContent = '';
+        reviewAnalysis.textContent = '';
+
+        if (boundingBoxURL) {
+          URL.revokeObjectURL(boundingBoxURL);
+          boundingBoxURL = undefined;
         }
+
+        if (processedURL) {
+          URL.revokeObjectURL(processedURL);
+          processedURL = undefined;
+        }
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) {
+          return `${bytes} B`;
+        }
+
+        if (bytes < 1024 * 1024) {
+          return `${(bytes / 1024).toFixed(1)} KB`;
+        }
+
+        return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+      }
+
+      function formatImageMetadata(image, blob) {
+        return [
+          `${image.naturalWidth} × ${image.naturalHeight}px`,
+          formatBytes(blob.size),
+          blob.type || 'Unknown format',
+        ].join(' • ');
+      }
+
+      async function showCapture(capture) {
+        clearPhoto();
+
+        boundingBoxURL = URL.createObjectURL(
+          capture.boundingBox,
+        );
+
+        processedURL = URL.createObjectURL(
+          capture.processed,
+        );
+
+        boundingBoxImage.src = boundingBoxURL;
+        processedImage.src = processedURL;
+
+        await Promise.all([
+          boundingBoxImage.decode(),
+          processedImage.decode(),
+        ]);
+
+        boundingBoxMeta.textContent = formatImageMetadata(
+          boundingBoxImage,
+          capture.boundingBox,
+        );
+
+        processedMeta.textContent = formatImageMetadata(
+          processedImage,
+          capture.processed,
+        );
+
+        reviewAnalysis.textContent = JSON.stringify(
+          capture.analysis ?? {},
+          null,
+          2,
+        );
+
+        result.hidden = false;
+        result.scrollTop = 0;
       }
 
       function syncControls() {
@@ -575,13 +784,11 @@
 
           const chip = document.createElement('div');
 
-          let status;
-
-          if (advisoryWarning) {
-            status = 'warning';
-          } else {
-            status = analysis.passed ? 'passed' : 'failed';
-          }
+          const status = advisoryWarning
+            ? 'warning'
+            : analysis.passed
+              ? 'passed'
+              : 'failed';
 
           chip.className = `analysis-result ${status}`;
 
@@ -727,6 +934,11 @@
             }`,
           );
         }
+
+        addMetric(
+          'Auto torch',
+          camera.autoTorchActivated ? 'Active' : 'Inactive',
+        );
       }
 
       // --------------------------------------------------
@@ -740,9 +952,6 @@
 
         const barcode = report.results.barcode;
         const readability = report.results.readability;
-
-        // If a barcode was decoded but failed a spatial
-        // constraint, prioritize positioning guidance.
 
         if (
           !barcode?.passed &&
@@ -797,8 +1006,6 @@
       // Live analysis
       // --------------------------------------------------
 
-      let latestReport;
-
       camera.addEventListener('analysis', event => {
         if (captured || busy) return;
 
@@ -813,15 +1020,14 @@
         syncControls();
       });
 
-      // Cached readiness can expire between analysis events.
-      // Observe reflected attributes to keep controls in sync.
-
       const cameraObserver = new MutationObserver(() => {
         syncControls();
 
         if (!captured && !busy && latestReport) {
           guidanceMessage.textContent =
             getGuidance(latestReport);
+
+          renderMetrics(latestReport);
         }
       });
 
@@ -832,7 +1038,26 @@
           'capturing',
           'torch-supported',
           'torch-enabled',
+          'auto-torch-activated',
         ],
+      });
+
+      camera.addEventListener('auto-torch-activated', () => {
+        if (captured || busy) return;
+
+        latestReport = undefined;
+
+        analysisResults.replaceChildren();
+        metricsContent.replaceChildren();
+
+        guidanceMessage.textContent =
+          'Automatically improving lighting…';
+
+        syncControls();
+      });
+
+      camera.addEventListener('auto-torch-error', event => {
+        console.warn('Automatic torch failed:', event.detail);
       });
 
       // --------------------------------------------------
@@ -879,6 +1104,7 @@
           analysisResults.replaceChildren();
           metricsContent.replaceChildren();
 
+          camera.resetAutoTorch();
           camera.analysisEnabled = true;
 
           label.textContent = 'Capture Barcode';
@@ -897,31 +1123,18 @@
         syncControls();
 
         try {
-          // Do not disable analysis before capture.
-          // Doing so would invalidate the cached frame.
+          // Both images come from the same cached frame.
+          // Do not disable analysis before capturing.
 
-          const photo = await camera.capture();
+          const capture = await camera.captureDetailed();
 
           camera.analysisEnabled = false;
 
           label.textContent = 'Processing…';
 
-          photoURL = URL.createObjectURL(photo);
-          result.src = photoURL;
+          await showCapture(capture);
 
-          await result.decode();
-
-          result.hidden = false;
           captured = true;
-
-          resultMeta.hidden = false;
-
-          resultMetaInner.textContent = [
-            `${result.naturalWidth} × ${result.naturalHeight}px`,
-            `${(photo.size / 1024).toFixed(1)} KB`,
-            photo.type || 'Unknown format',
-            'PDF417 verified',
-          ].join(' • ');
 
           if (camera.torchEnabled) {
             try {
@@ -931,11 +1144,22 @@
             }
           }
 
-          console.log('Captured barcode:', photo);
+          console.log('Capture completed:', {
+            processed: {
+              size: capture.processed.size,
+              type: capture.processed.type,
+            },
+            boundingBox: {
+              size: capture.boundingBox.size,
+              type: capture.boundingBox.type,
+            },
+            timestamp: capture.timestamp,
+          });
         } catch (error) {
           clearPhoto();
 
           captured = false;
+          camera.resetAutoTorch();
           camera.analysisEnabled = true;
 
           console.error('Capture failed:', error);
@@ -964,6 +1188,10 @@
 
         syncControls();
       });
+
+      // --------------------------------------------------
+      // Cleanup
+      // --------------------------------------------------
 
       window.addEventListener('pagehide', event => {
         if (event.persisted) return;

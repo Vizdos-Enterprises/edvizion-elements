@@ -67,3 +67,10 @@ export interface CaptureFrame {
 export interface CaptureProcessor {
   process(frame: CaptureFrame): Promise<Blob>;
 }
+
+export interface DetailedCaptureResult {
+  processed: Blob;
+  boundingBox: Blob;
+  analysis?: AnalysisReport;
+  timestamp: number;
+}
