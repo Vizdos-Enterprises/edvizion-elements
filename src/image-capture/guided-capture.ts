@@ -89,9 +89,18 @@ export class GuidedCapture extends LitElement {
     analysisWidth: number;
     analysisHeight: number;
     boundingBox?: Rectangle;
+    timestamp: number;
   };
 
   private revision = 0;
+
+  @property({
+    type: Number,
+    attribute: 'capture-cache-duration',
+  })
+  accessor captureCacheDuration = 1500;
+
+  private cacheExpiryTimer?: ReturnType<typeof setTimeout>;
 
   static styles = css`
     :host {
@@ -327,6 +336,7 @@ export class GuidedCapture extends LitElement {
       ? Math.max(1, this.analysisResolution)
       : 640;
 
+    const timestamp = performance.now();
     const bitmap = await this.camera.getFullResolutionFrame();
 
     let analysisBitmap: ImageBitmap | undefined;
@@ -351,7 +361,7 @@ export class GuidedCapture extends LitElement {
       const report = await this.pipeline.analyze(
         {
           bitmap: analysisBitmap,
-          timestamp: performance.now(),
+          timestamp,
           sourceWidth: bitmap.width,
           sourceHeight: bitmap.height,
           boundingBox: this.getImageBoundingBox(
@@ -372,9 +382,13 @@ export class GuidedCapture extends LitElement {
         return;
       }
 
-      this.releaseAnalyzedFrame();
+      // Only replace the cached frame when analysis passes.
+      if (
+        report.ready &&
+        performance.now() - timestamp < this.captureCacheDuration
+      ) {
+        this.releaseAnalyzedFrame();
 
-      if (report.ready) {
         this.analyzedFrame = {
           bitmap,
           analysis: report,
@@ -384,13 +398,17 @@ export class GuidedCapture extends LitElement {
             bitmap.width,
             bitmap.height,
           ),
+          timestamp,
         };
 
         retained = true;
+
+        this.scheduleCacheExpiry();
       }
 
+      // Failed analysis no longer destroys a valid cached frame.
       this.analysis = report;
-      this.ready = report.ready;
+      this.ready = this.hasValidCachedFrame();
 
       this.dispatchEvent(
         new CustomEvent<AnalysisReport>('analysis', {
@@ -408,10 +426,7 @@ export class GuidedCapture extends LitElement {
     }
   }
 
-  private releaseAnalyzedFrame(): void {
-    this.analyzedFrame?.bitmap.close();
-    this.analyzedFrame = undefined;
-  }
+
 
   async start(): Promise<void> {
     await this.updateComplete;
@@ -419,6 +434,37 @@ export class GuidedCapture extends LitElement {
     this.invalidateAnalysis();
 
     await this.camera.start();
+  }
+
+  private hasValidCachedFrame(): boolean {
+    return !!this.analyzedFrame &&
+      performance.now() - this.analyzedFrame.timestamp
+        < this.captureCacheDuration;
+  }
+
+  private scheduleCacheExpiry(): void {
+    clearTimeout(this.cacheExpiryTimer);
+
+    if (!this.analyzedFrame) return;
+
+    const remaining = Math.max(
+      0,
+      this.captureCacheDuration -
+        (performance.now() - this.analyzedFrame.timestamp),
+    );
+
+    this.cacheExpiryTimer = setTimeout(() => {
+      this.releaseAnalyzedFrame();
+      this.ready = false;
+    }, remaining);
+  }
+
+  private releaseAnalyzedFrame(): void {
+    clearTimeout(this.cacheExpiryTimer);
+    this.cacheExpiryTimer = undefined;
+
+    this.analyzedFrame?.bitmap.close();
+    this.analyzedFrame = undefined;
   }
 
   stop(): void {
@@ -433,13 +479,16 @@ export class GuidedCapture extends LitElement {
 
     const processor = this.captureProcessor;
 
-    if (processor && !this.analyzedFrame) {
-      throw new Error('No validated frame available');
+    if (processor && !this.hasValidCachedFrame()) {
+      this.releaseAnalyzedFrame();
+      this.ready = false;
+
+      throw new Error('No recent validated frame available');
     }
 
     this.capturing = true;
 
-    // Transfer ownership before invalidating analysis.
+    // Transfer ownership of the cached frame.
     const frame = this.analyzedFrame;
     this.analyzedFrame = undefined;
 
