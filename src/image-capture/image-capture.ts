@@ -185,6 +185,16 @@ export class ImageCapture extends LitElement {
     await this.setTorch(!this.torchEnabled);
   }
 
+  async getFullResolutionFrame(): Promise<ImageBitmap> {
+    const { video } = this;
+
+    if (!video || video.readyState < 2) {
+      throw new Error('Camera is not ready');
+    }
+
+    return createImageBitmap(video);
+  }
+
   async getFrame(maxDimension = 640): Promise<{
     bitmap: ImageBitmap;
     sourceWidth: number;

@@ -18,6 +18,7 @@ import type {
   AnalysisReport,
   BoundingBox,
   Rectangle,
+  CaptureProcessor,
 } from './analysis/types.js';
 
 @customElement('guided-capture')
@@ -63,6 +64,9 @@ export class GuidedCapture extends LitElement {
   @property({ attribute: false })
   accessor analysis: AnalysisReport | undefined = undefined;
 
+  @property({ attribute: false })
+  accessor captureProcessor: CaptureProcessor | undefined = undefined;
+
   @query('image-capture')
   accessor camera!: ImageCapture;
 
@@ -78,6 +82,14 @@ export class GuidedCapture extends LitElement {
   private timer?: ReturnType<typeof setTimeout>;
   private observer?: MutationObserver;
   private resizeObserver?: ResizeObserver;
+
+  private analyzedFrame?: {
+    bitmap: ImageBitmap;
+    analysis: AnalysisReport;
+    analysisWidth: number;
+    analysisHeight: number;
+    boundingBox?: Rectangle;
+  };
 
   private revision = 0;
 
@@ -194,6 +206,8 @@ export class GuidedCapture extends LitElement {
     this.revision++;
     this.ready = false;
     this.analysis = undefined;
+
+    this.releaseAnalyzedFrame();
   }
 
   private observeGeometry(): void {
@@ -206,7 +220,6 @@ export class GuidedCapture extends LitElement {
 
   private observeCamera(): void {
     const sync = () => {
-      this.capturing = this.camera.capturing;
       this.torchSupported = this.camera.torchSupported;
       this.torchEnabled = this.camera.torchEnabled;
     };
@@ -279,7 +292,7 @@ export class GuidedCapture extends LitElement {
     try {
       if (
         this.analysisEnabled &&
-        !this.camera.capturing &&
+        !this.capturing &&
         this.analyzers.length > 0 &&
         this.stage.clientWidth > 0 &&
         this.stage.clientHeight > 0
@@ -306,9 +319,7 @@ export class GuidedCapture extends LitElement {
     }
   }
 
-  private async analyzeFrame(
-    signal: AbortSignal,
-  ): Promise<void> {
+  private async analyzeFrame(signal: AbortSignal): Promise<void> {
     const revision = this.revision;
     const analyzers = [...this.analyzers];
 
@@ -316,19 +327,36 @@ export class GuidedCapture extends LitElement {
       ? Math.max(1, this.analysisResolution)
       : 640;
 
-    const frame = await this.camera.getFrame(resolution);
+    const bitmap = await this.camera.getFullResolutionFrame();
+
+    let analysisBitmap: ImageBitmap | undefined;
+    let retained = false;
 
     try {
+      const scale = Math.min(
+        1,
+        resolution / Math.max(bitmap.width, bitmap.height),
+      );
+
+      analysisBitmap = await createImageBitmap(bitmap, {
+        resizeWidth: Math.max(1, Math.round(bitmap.width * scale)),
+        resizeHeight: Math.max(1, Math.round(bitmap.height * scale)),
+        resizeQuality: 'medium',
+      });
+
       signal.throwIfAborted();
 
       if (revision !== this.revision) return;
 
       const report = await this.pipeline.analyze(
         {
-          ...frame,
+          bitmap: analysisBitmap,
+          timestamp: performance.now(),
+          sourceWidth: bitmap.width,
+          sourceHeight: bitmap.height,
           boundingBox: this.getImageBoundingBox(
-            frame.bitmap.width,
-            frame.bitmap.height,
+            analysisBitmap.width,
+            analysisBitmap.height,
           ),
           signal,
         },
@@ -338,24 +366,51 @@ export class GuidedCapture extends LitElement {
       if (
         signal.aborted ||
         revision !== this.revision ||
-        this.camera.capturing ||
+        this.capturing ||
         !this.analysisEnabled
-      ) return;
+      ) {
+        return;
+      }
+
+      this.releaseAnalyzedFrame();
+
+      if (report.ready) {
+        this.analyzedFrame = {
+          bitmap,
+          analysis: report,
+          analysisWidth: analysisBitmap.width,
+          analysisHeight: analysisBitmap.height,
+          boundingBox: this.getImageBoundingBox(
+            bitmap.width,
+            bitmap.height,
+          ),
+        };
+
+        retained = true;
+      }
 
       this.analysis = report;
       this.ready = report.ready;
 
-      this.dispatchEvent(new CustomEvent<AnalysisReport>(
-        'analysis',
-        {
+      this.dispatchEvent(
+        new CustomEvent<AnalysisReport>('analysis', {
           detail: report,
           bubbles: true,
           composed: true,
-        },
-      ));
+        }),
+      );
     } finally {
-      frame.bitmap.close();
+      analysisBitmap?.close();
+
+      if (!retained) {
+        bitmap.close();
+      }
     }
+  }
+
+  private releaseAnalyzedFrame(): void {
+    this.analyzedFrame?.bitmap.close();
+    this.analyzedFrame = undefined;
   }
 
   async start(): Promise<void> {
@@ -372,9 +427,38 @@ export class GuidedCapture extends LitElement {
   }
 
   async capture(): Promise<Blob> {
+    if (this.capturing) {
+      throw new Error('Capture already in progress');
+    }
+
+    const processor = this.captureProcessor;
+
+    if (processor && !this.analyzedFrame) {
+      throw new Error('No validated frame available');
+    }
+
+    this.capturing = true;
+
+    // Transfer ownership before invalidating analysis.
+    const frame = this.analyzedFrame;
+    this.analyzedFrame = undefined;
+
     this.invalidateAnalysis();
 
-    return await this.camera.capture();
+    try {
+      if (!processor) {
+        return await this.camera.capture();
+      }
+
+      if (!frame) {
+        throw new Error('No validated frame available');
+      }
+
+      return await processor.process(frame);
+    } finally {
+      frame?.bitmap.close();
+      this.capturing = false;
+    }
   }
 
   async setTorch(enabled: boolean): Promise<void> {

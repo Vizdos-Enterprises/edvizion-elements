@@ -36,7 +36,7 @@
       }
 
       #result {
-        object-fit: cover;
+        object-fit: contain;
         object-position: center;
         background: black;
         z-index: 1;
@@ -311,7 +311,9 @@
     </div>
 
     <script type="module">
-	  import { BrightnessAnalyzer } from '/src/image-capture/index.ts';
+	  import { BrightnessAnalyzer, ScanicAnalyzer,
+		  ScanicCaptureProcessor,
+ } from '/src/image-capture/index.ts';
 
       const camera = document.querySelector('guided-capture');
       const result = document.querySelector('#result');
@@ -338,7 +340,13 @@
 
       camera.analyzers = [
         new BrightnessAnalyzer(60, 220),
+        new ScanicAnalyzer(),
       ];
+
+      camera.captureProcessor = new ScanicCaptureProcessor({
+        padding: 0.08,
+        quality: 0.98,
+      });
 
       // Live analysis feedback
 
@@ -442,8 +450,6 @@
         button.disabled = true;
         torch.disabled = true;
 
-        camera.analysisEnabled = false;
-
         try {
           const photo = await camera.capture();
 
@@ -475,6 +481,10 @@
           camera.analysisEnabled = true;
 
           console.error('Capture failed:', error);
+
+          alert(error instanceof Error
+            ? error.message
+            : 'Capture failed');
         } finally {
           button.disabled = false;
           torch.disabled = false;

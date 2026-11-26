@@ -54,3 +54,16 @@ export interface AnalysisReport {
   timestamp: number;
   results: Record<string, AnalysisResult>;
 }
+
+export interface CaptureFrame {
+  bitmap: ImageBitmap;
+  boundingBox?: Rectangle;
+
+  analysis?: AnalysisReport;
+  analysisWidth?: number;
+  analysisHeight?: number;
+}
+
+export interface CaptureProcessor {
+  process(frame: CaptureFrame): Promise<Blob>;
+}
